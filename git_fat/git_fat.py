@@ -300,7 +300,7 @@ class HTTPBackend(BackendInterface):
         if not remote_url:
             raise RuntimeError('No remote url configured for http backend')
 
-        if not remote_url.startswith('http') or remote_url.startswith('https'):
+        if not (remote_url.startswith('http') or remote_url.startswith('https')):
             raise RuntimeError('http remote url must start with http:// or https://')
 
         self.remote_url = remote_url
