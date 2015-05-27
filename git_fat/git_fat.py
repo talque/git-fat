@@ -224,13 +224,20 @@ def _obj_dir():
     return objdir
 
 
-def http_get(baseurl, filename):
+def http_get(baseurl, filename, user=None, password=None):
     ''' Returns file descriptor for http file stream, catches urllib2 errors '''
     import urllib2
     try:
         print("Downloading: {0}".format(filename))
         geturl = '/'.join([baseurl, filename])
-        res = urllib2.urlopen(geturl)
+        if user is None:
+            res = urllib2.urlopen(geturl)
+        else:
+            mgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
+            mgr.add_password(None, baseurl, user, password)
+            handler = urllib2.HTTPBasicAuthHandler(mgr)
+            opener = urllib2.build_opener(handler)
+            res = opener.open(geturl)
         return res.fp
     except urllib2.URLError as e:
         logger.warning(e.reason + ': {0}'.format(geturl))
@@ -304,13 +311,15 @@ class HTTPBackend(BackendInterface):
             raise RuntimeError('http remote url must start with http:// or https://')
 
         self.remote_url = remote_url
+        self.user = kwargs.get('user')
+        self.password = kwargs.get('password')
         self.base_dir = base_dir
 
     def pull_files(self, file_list):
         is_success = True
 
         for o in file_list:
-            stream = http_get(self.remote_url, o)
+            stream = http_get(self.remote_url, o, self.user, self.password)
             blockiter = readblocks(stream)
 
             # HTTP Error
