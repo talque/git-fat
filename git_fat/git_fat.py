@@ -444,7 +444,7 @@ class RSyncBackend(BackendInterface):
         rsync = self._rsync(push=True)
         logger.debug("rsync push command: {}".format(" ".join(rsync)))
         p = sub.Popen(rsync, stdin=sub.PIPE)
-        p.communicate(input='\x00'.join(file_list))
+        p.communicate(input=b'\x00'.join(file_list))
         # TODO: fix for success check
         return True
 
@@ -997,7 +997,7 @@ def _get_options(config, backend, cfg_file_path):
 
 
 def _read_config(cfg_file_path=None):
-    config = cfgparser.SafeConfigParser()
+    config = cfgparser.ConfigParser()
     if not os.path.exists(cfg_file_path):
         # Can't continue, but this isn't unusual
         logger.warning("This does not appear to be a repository managed by git-fat. "
