@@ -3,6 +3,15 @@ git-fat
 
 A tool for managing large binary files in git repositories.
 
+talque fork
+-----------
+
+This repository is yet another fork of git-fat brought to you by *talque*.  Thus far
+it adds:
+
+* A minimal port to work on modern Python 3 (Python 2 support dropped)
+* Fix for rsync >= v3.2.6
+
 Introduction
 ------------
 
