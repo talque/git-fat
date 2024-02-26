@@ -397,7 +397,7 @@ class RSyncBackend(BackendInterface):
             rsync_tool = 'git-fat_rsync.exe'
         else:
             rsync_tool = 'rsync'
-        cmd_tmpl = [rsync_tool] + ' --protect-args --progress'\
+        cmd_tmpl = [rsync_tool] + ' -s --progress'\
             ' --ignore-existing --from0 --files-from=-'.split()
 
         if push:
