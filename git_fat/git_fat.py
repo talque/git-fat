@@ -642,7 +642,11 @@ class GitFat(object):
         '''
         patterns = patterns or []
         # Null-terminated for proper file name handling (spaces)
-        for fname in sub.check_output(['git', 'ls-files', '-z'] + patterns).split('\x00')[:-1]:
+        out = sub.check_output(['git', 'ls-files', '-z'] + patterns, binary=True)
+        for fname in out.split(b'\x00')[:-1]:
+            # TODO: Properly speaking should use the correct locale encoding; but
+            # assume UTF-8 because we are not in Japan (yet...)
+            fname = fname.decode('utf-8')
             if not os.path.exists(fname):
                 continue
             st = os.lstat(fname)
