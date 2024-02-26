@@ -3,18 +3,18 @@
 
 from __future__ import print_function, with_statement
 
+import argparse
+import configparser as cfgparser
 import hashlib
+import logging as _logging  # Use logger.error(), not logging.error()
 import os
+import platform
+import shutil
+import stat
 import subprocess as sub
 import sys
 import tempfile
 import warnings
-import ConfigParser as cfgparser
-import logging as _logging  # Use logger.error(), not logging.error()
-import shutil
-import argparse
-import platform
-import stat
 
 _logging.basicConfig(format='%(levelname)s:%(filename)s: %(message)s')
 logger = _logging.getLogger(__name__)
@@ -77,6 +77,11 @@ GIT_SSH = os.getenv("GIT_SSH")
 
 def git(cliargs, *args, **kwargs):
     ''' Calls git commands with Popen arguments '''
+    binary = kwargs.pop('binary', False)
+
+    if not binary:
+        kwargs.update({'encoding': 'utf-8'})
+
     if GIT_FAT_LOG_FILE and "--failfast" in sys.argv:
         # Flush any prior logger warning/error/critical to the log file
         # which is being checked by unit tests.
@@ -88,7 +93,7 @@ def git(cliargs, *args, **kwargs):
     return sub.Popen(['git'] + cliargs, *args, **kwargs)
 
 
-def check_output2(args):
+def check_output2(args, encoding=None):
     if GIT_FAT_LOG_FILE and "--failfast" in sys.argv:
         # Flush any prior logger warning/error/critical to the log file
         # which is being checked by unit tests.
@@ -99,7 +104,7 @@ def check_output2(args):
         for i, v in enumerate(args):
             args[i] = v.replace("\x00", r"\x00")
         logger.debug('{}'.format(' '.join(args2)))
-    return original_check_output(args)
+    return original_check_output(args, encoding=encoding)
 
 
 original_check_output = sub.check_output
@@ -177,6 +182,8 @@ def readblocks(stream):
 
 def cat_iter(initer, outstream):
     for block in initer:
+        if isinstance(block, bytes):
+            block = block.decode('utf-8')
         outstream.write(block)
 
 
@@ -207,7 +214,8 @@ def gitconfig_set(name, value, cfgfile=None):
 
 def _config_path(path=None):
     try:
-        root = sub.check_output('git rev-parse --show-toplevel'.split()).strip()
+        root = sub.check_output('git rev-parse --show-toplevel'.split(),
+                                encoding='utf-8').strip()
     except sub.CalledProcessError:
         raise RuntimeError('git-fat must be run from a git directory')
     default_path = os.path.join(root, '.gitfat')
@@ -217,7 +225,8 @@ def _config_path(path=None):
 
 def _obj_dir():
     try:
-        gitdir = sub.check_output('git rev-parse --git-dir'.split()).strip()
+        gitdir = sub.check_output('git rev-parse --git-dir'.split(),
+                                  encoding='utf-8').strip()
     except sub.CalledProcessError:
         raise RuntimeError('git-fat must be run from a git directory')
     objdir = os.path.join(gitdir, 'fat', 'objects')
@@ -253,6 +262,9 @@ def hash_stream(blockiter, outstream):
 
     for block in blockiter:
         # Add the block to be hashed
+        if isinstance(block, str):
+            block = block.encode('utf-8')
+
         hasher.update(block)
         bytes_written += len(block)
         outstream.write(block)
@@ -461,7 +473,7 @@ class GitFat(object):
             self._format = self._cookie + '{digest}\n'
 
         # considers the git-fat version when generating the magic length
-        _ml = lambda fn: len(fn(hashlib.sha1('dummy').hexdigest(), 5))
+        _ml = lambda fn: len(fn(hashlib.sha1(b'dummy').hexdigest(), 5))
         self._magiclen = _ml(self._encode)
 
         self.configure()
@@ -510,6 +522,10 @@ class GitFat(object):
 
         # Put block back
         ret = prepend(block, stream_iter)
+
+        if isinstance(block, bytes):
+            block = block.decode('latin-1')
+
         if block.startswith(self._cookie):
             if len(block) != self._magiclen:  # Sanity check
                 warnings.warn('Found file with cookie but without magiclen')
@@ -617,7 +633,7 @@ class GitFat(object):
 
         # return a dict(git-fat hash -> filename)
         # git's objhash are the keys in `managed` and `filedict`
-        ret = dict((j, filedict[i]) for i, j in managed.iteritems())
+        ret = dict((j, filedict[i]) for i, j in managed.items())
         return ret
 
     def _orphan_files(self, patterns=None):
@@ -787,19 +803,20 @@ class GitFat(object):
             objhash = hashobj.stdout.read().strip()
             catfile.wait()
             hashobj.wait()
-            with open(cleanedobj_hash, 'wb') as cleaned:
+            with open(cleanedobj_hash, 'w') as cleaned:
                 cleaned.write(objhash + '\n')
         else:
-            with open(cleanedobj_hash, 'rb') as cleaned:
+            with open(cleanedobj_hash, 'r') as cleaned:
                 objhash = cleaned.read().strip()
         return mode, objhash, stageno, filename
 
     def index_filter(self, filelist, add_gitattributes=True, **unused_kwargs):
-        gitdir = sub.check_output('git rev-parse --git-dir'.split()).strip()
+        gitdir = sub.check_output('git rev-parse --git-dir'.split(),
+                                  encoding='utf-8').strip()
         workdir = os.path.join(gitdir, 'fat', 'index-filter')
         mkdir_p(workdir)
 
-        with open(filelist, 'rb') as excludes:
+        with open(filelist, 'r') as excludes:
             files_to_exclude = excludes.read().splitlines()
 
         ls_files = git('ls-files -s'.split(), stdout=sub.PIPE)
@@ -1128,7 +1145,7 @@ def main():
         help='prevent adding excluded to .gitattributes', action='store_false')
     sp.set_defaults(func='index_filter')
 
-    if len(sys.argv) > 1 and sys.argv[1] in [c + 'version' for c in '', '-', '--']:
+    if len(sys.argv) > 1 and sys.argv[1] in [c + 'version' for c in ['', '-', '--']]:
         print(__version__)
         sys.exit(0)
 

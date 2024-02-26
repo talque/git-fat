@@ -110,6 +110,11 @@ def call(cmd, *args, **kwargs):
     if isinstance(cmd, str):
         cmd = cmd.split()
     check_log_file_for_errors()
+    binary = kwargs.pop('binary', False)
+
+    if not binary:
+        kwargs.update({'encoding': 'utf-8'})
+
     ignore_error_codes = []
     logger.debug('{}'.format(' '.join(cmd)) + ' ()'.format(args, kwargs))
     if "ignore_error_codes" in kwargs:
@@ -262,9 +267,9 @@ class Base(unittest.TestCase):
 
     def _setup_gitfat_files(self):
         with open('.gitfat', 'wb') as f:
-            f.write('[copy]\nremote={}'.format(self.fatstore))
+            f.write('[copy]\nremote={}'.format(self.fatstore).encode('utf-8'))
         with open('.gitattributes', 'wb') as f:
-            f.write('*.fat filter=fat -crlf')
+            f.write(b'*.fat filter=fat -crlf')
 
     def _replace_in_file(self, f, search, replace):
         with open(f, "rb") as fo:
@@ -299,7 +304,7 @@ class InitTestCase(Base):
 
     def test_git_fat_init(self):
         with open('.gitfat', 'wb') as f:
-            f.write('[copy]\nremote={}'.format(self.fatstore))
+            f.write('[copy]\nremote={}'.format(self.fatstore).encode('utf-8'))
         out = git('fat init')
         expect = 'Setting filters in .git/config\nCreating .git/fat/objects\nInitialized git-fat'.strip()
         self.assertEqual(out.strip(), expect)
@@ -324,7 +329,7 @@ class InitTestCase(Base):
         """ Test that find works without a backend """
         filename = 'somebin.png'
         with open(filename, 'wb') as f:
-            f.write('aa' * 9990)
+            f.write(b'aa' * 9990)
         commit('add file')
         out = git('fat find 9000', stderr=sub.STDOUT)
         self.assertTrue('somebin.png' in out)
@@ -333,7 +338,7 @@ class InitTestCase(Base):
         """ Don't convert existing files into git-fat files unless they get renamed """
 
         expect = 'a fat file'
-        with open('a.fat', 'wb') as f:
+        with open('a.fat', 'w') as f:
             f.write(expect)
 
         commit('initial')
@@ -343,22 +348,22 @@ class InitTestCase(Base):
         git('fat init')
 
         # Initializing git-fat doesn't convert it
-        with open('a.fat', 'rb') as f:
+        with open('a.fat', 'r') as f:
             actual = f.read()
         self.assertEqual(expect, actual)
         actual = read_index('a.fat')
         self.assertEqual(expect, actual)
 
         # change the repo without changing a.fat
-        with open('README', 'wb') as f:
-            f.write("something else changed")
+        with open('README', 'w') as f:
+            f.write('something else changed')
         commit('a.fat doesnt change')
         actual = read_index('a.fat')
         self.assertEqual(expect, actual)
 
         # changing the file alone doesn't convert it
         append_me = '\nmore stuff'
-        with open('a.fat', 'ab') as f:
+        with open('a.fat', 'a') as f:
             f.write(append_me)
         commit('a.fat changed')
         actual = read_index('a.fat')
@@ -401,7 +406,7 @@ class FileTypeTestCase(InitRepoTestCase):
 
     def test_file_with_spaces(self):
         """ Ensure that files with spaces don't make git-fat barf """
-        contents = 'This is a fat file\n'
+        contents = b'This is a fat file\n'
         filename = 'A fat file with spaces.fat'
         with open(filename, 'wb') as f:
             f.write(contents)
@@ -415,7 +420,7 @@ class GeneralTestCase(InitRepoTestCase):
         super(GeneralTestCase, self).setUp()
 
         filename = 'a.fat'
-        contents = 'a'
+        contents = b'a'
         with open(filename, 'wb') as f:
             f.write(contents * 1024)
         filename = 'b.fat'
@@ -464,7 +469,7 @@ class GeneralTestCase(InitRepoTestCase):
             self.assertEqual(hashes[filename], objhash)
 
     def test_find(self):
-        contents = 'b'
+        contents = b'b'
 
         filename = 'small.sh'
         with open(filename, 'wb') as f:
@@ -486,27 +491,29 @@ class GeneralTestCase(InitRepoTestCase):
 
         flowerpot = 'flowerpot.tar.gz'
         with open(flowerpot, 'wb') as f:
-            f.write('a' * 9990)
+            f.write(b'a' * 9990)
         commit('add fake tar file')
         whale = 'whale.tar.gz'
         with open(whale, 'wb') as f:
-            f.write('a' * 10000)
+            f.write(b'a' * 10000)
         commit('add another fake tar file')
         out = git('fat find 9000')
         self.assertTrue(whale in out)
         self.assertTrue(flowerpot in out)
 
         fd, filename = tempfile.mkstemp()
-        with os.fdopen(fd, 'wb') as f:
+        with os.fdopen(fd, 'w') as f:
             f.write(flowerpot + '\n')
             f.write(whale + '\n')
 
         # Need to replace backslashes with slashes, otherwise command
         # fails on Windows.
         filename = filename.replace("\\", "/")
+        env = os.environ.copy()
+        env['FILTER_BRANCH_SQUELCH_WARNING'] = '1'
         git(['filter-branch', '--index-filter',
-             'git fat index-filter {}'.format(filename),
-             '--tag-name-filter', 'cat', '--', '--all'])
+             'git-fat index-filter {}'.format(filename),
+             '--tag-name-filter', 'cat', '--', '--all'], env=env)
 
         self.assertTrue('#$# git-fat' in read_index(flowerpot))
         self.assertTrue('#$# git-fat' in read_index(whale))

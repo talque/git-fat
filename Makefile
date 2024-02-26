@@ -13,6 +13,6 @@ test-flake8:
 COVERAGE ?= coverage
 test-git-fat:
 	cd $(ROOT)
-	rm -f .coverage
+	rm -rf .coverage
 	$(PYTHON) tests/test_git_fat.py
 	$(COVERAGE) combine

@@ -12,7 +12,7 @@ class Tox(TestCommand):
 
     def run_tests(self):
         import tox
-        errno = tox.cmdline(self.test_args)
+        errno = tox.main(self.test_args)
         sys.exit(errno)
 
 from git_fat import __version__
