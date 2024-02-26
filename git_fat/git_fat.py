@@ -436,7 +436,7 @@ class RSyncBackend(BackendInterface):
             # re-raise with a more useful message
             raise OSError('Error running "%s"' % " ".join(rsync))
 
-        p.communicate(input='\x00'.join(file_list))
+        p.communicate(input=b'\x00'.join(f.encode('utf-8') for f in file_list))
         # TODO: fix for success check
         return True
 
@@ -444,7 +444,7 @@ class RSyncBackend(BackendInterface):
         rsync = self._rsync(push=True)
         logger.debug("rsync push command: {}".format(" ".join(rsync)))
         p = sub.Popen(rsync, stdin=sub.PIPE)
-        p.communicate(input=b'\x00'.join(file_list))
+        p.communicate(input=b'\x00'.join(f.encode('utf-8') for f in file_list))
         # TODO: fix for success check
         return True
 
@@ -642,7 +642,7 @@ class GitFat(object):
         '''
         patterns = patterns or []
         # Null-terminated for proper file name handling (spaces)
-        out = sub.check_output(['git', 'ls-files', '-z'] + patterns, binary=True)
+        out = sub.check_output(['git', 'ls-files', '-z'] + patterns)
         for fname in out.split(b'\x00')[:-1]:
             # TODO: Properly speaking should use the correct locale encoding; but
             # assume UTF-8 because we are not in Japan (yet...)
