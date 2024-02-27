@@ -2,6 +2,8 @@ from distutils.core import setup
 from setuptools.command.test import test as TestCommand  # noqa
 import sys
 
+from git_fat import __version__
+
 
 class Tox(TestCommand):
 
@@ -15,7 +17,6 @@ class Tox(TestCommand):
         errno = tox.main(self.test_args)
         sys.exit(errno)
 
-from git_fat import __version__
 
 setup(
     description="Manage large binary files with git",

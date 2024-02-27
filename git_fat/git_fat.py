@@ -15,6 +15,7 @@ import subprocess as sub
 import sys
 import tempfile
 import warnings
+from typing import Callable
 
 _logging.basicConfig(format='%(levelname)s:%(filename)s: %(message)s')
 logger = _logging.getLogger(__name__)
@@ -473,12 +474,14 @@ class GitFat(object):
             self._format = self._cookie + '{digest}\n'
 
         # considers the git-fat version when generating the magic length
-        _ml = lambda fn: len(fn(hashlib.sha1(b'dummy').hexdigest(), 5))
-        self._magiclen = _ml(self._encode)
+        def magiclen(fn: Callable[[str, int], str]) -> int:
+            return len(fn(hashlib.sha1(b'dummy').hexigest(), 5))
+
+        self._magiclen = magiclen(self._encode)
 
         self.configure()
 
-    def configure(self):
+    def configure(self) -> None:
         '''
         Configure git-fat for usage: variables, environment
         '''
@@ -722,10 +725,8 @@ class GitFat(object):
         logger.debug("CLEAN: cur_file={}, unused_kwargs={}"
                      .format(cur_file, unused_kwargs))
         if cur_file and not self.can_clean_file(cur_file):
-            logger.info(
-                "Not adding: {0}. ".format(cur_file) +
-                "It is not a new file and is not managed by git-fat"
-            )
+            logger.info(f'Not adding {cur_file}. It is not a new file and is not '
+                        f'managed by git-fat')
             # Git needs something, so we cat stdin to stdout
             cat(sys.stdin, sys.stdout)
         else:  # We clean the file
@@ -1170,7 +1171,7 @@ def main():
     except RuntimeError as err:
         logger.error(str(err))
         sys.exit(1)
-    except:
+    except Exception:
         if kwargs.get('cur_file'):
             logger.error("processing file: " + kwargs.get('cur_file'))
         raise

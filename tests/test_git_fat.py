@@ -116,7 +116,6 @@ def call(cmd, *args, **kwargs):
         kwargs.update({'encoding': 'utf-8'})
 
     ignore_error_codes = []
-    logger.debug('{}'.format(' '.join(cmd)) + ' ()'.format(args, kwargs))
     if "ignore_error_codes" in kwargs:
         ignore_error_codes = kwargs.pop("ignore_error_codes")
     try:
