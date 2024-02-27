@@ -7,6 +7,7 @@ import argparse
 import configparser as cfgparser
 import errno
 import hashlib
+import io
 import logging as _logging  # Use logger.error(), not logging.error()
 import os
 import platform
@@ -16,9 +17,12 @@ import subprocess as sub
 import sys
 import tempfile
 import warnings
+from urllib.error import URLError
 from urllib.request import (
-    HTTPBasicAuthHandler, HTTPPasswordMgrWithDefaultRealm, URLError, build_opener, urlopen)
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple
+    HTTPBasicAuthHandler, HTTPPasswordMgrWithDefaultRealm, build_opener, urlopen)
+from typing import (
+    TYPE_CHECKING, Any, Callable, Container, Dict, FrozenSet, IO, Iterable, Iterator, List,
+    Optional, Tuple, cast)
 
 _logging.basicConfig(format='%(levelname)s:%(filename)s: %(message)s')
 logger = _logging.getLogger(__name__)
@@ -55,7 +59,7 @@ GIT_FAT_LOG_FILE = os.getenv("GIT_FAT_LOG_FILE", "")
 GIT_SSH = os.getenv("GIT_SSH")
 
 
-def git(cliargs, *args, **kwargs):
+def git(cliargs: List[str], *args: Any, **kwargs: Any) -> sub.Popen:
     ''' Calls git commands with Popen arguments '''
     binary = kwargs.pop('binary', False)
 
@@ -106,7 +110,7 @@ def mkdir_p(path: str) -> None:
 # On Windows files may be read only and may require changing
 # permissions. Always use these functions for moving/deleting files.
 
-def move_file(src, dst):
+def move_file(src: str, dst: str) -> None:
     if platform.system() == "Windows":
         if os.path.exists(src) and not os.access(src, os.W_OK):
             st = os.stat(src)
@@ -117,7 +121,7 @@ def move_file(src, dst):
     shutil.move(src, dst)
 
 
-def delete_file(f):
+def delete_file(f: str) -> None:
     if platform.system() == "Windows":
         if os.path.exists(f) and not os.access(f, os.W_OK):
             st = os.stat(f)
@@ -127,20 +131,20 @@ def delete_file(f):
 # -----------------------------------------------------------------------------
 
 
-def make_sys_streams_binary():
+def make_sys_streams_binary() -> None:
     # Information for future: in Python 3 use sys.stdin.detach()
     # for both Linux and Windows.
     if platform.system() == "Windows":
         import msvcrt  # pylint: disable=import-error,import-outside-toplevel
-        result = msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+        result = msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)  # type: ignore[attr-defined]
         if result == -1:
             raise Exception("Setting sys.stdin to binary mode failed")
-        result = msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+        result = msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)  # type: ignore[attr-defined]
         if result == -1:
             raise Exception("Setting sys.stdout to binary mode failed")
 
 
-def umask():
+def umask() -> int:
     '''
     Get umask without changing it.
     '''
@@ -149,7 +153,7 @@ def umask():
     return old
 
 
-def readblocks(stream):
+def readblocks(stream: IO[bytes]) -> Iterable[bytes]:
     '''
     Reads BLOCK_SIZE from stream and yields it
     '''
@@ -160,14 +164,12 @@ def readblocks(stream):
         yield data
 
 
-def cat_iter(initer, outstream):
+def cat_iter(initer: Iterable[bytes], outstream: IO[bytes]) -> None:
     for block in initer:
-        if isinstance(block, bytes):
-            block = block.decode('utf-8')
         outstream.write(block)
 
 
-def cat(instream, outstream):
+def cat(instream: IO[bytes], outstream: IO[bytes]) -> None:
     return cat_iter(readblocks(instream), outstream)
 
 
@@ -192,7 +194,7 @@ def gitconfig_set(name, value, cfgfile=None):
     sub.check_call(args)
 
 
-def _config_path(path=None):
+def _config_path(path: Optional[str] = None) -> str:
     try:
         root = sub.check_output('git rev-parse --show-toplevel'.split(),
                                 encoding='utf-8').strip()
@@ -203,7 +205,7 @@ def _config_path(path=None):
     return path
 
 
-def _obj_dir():
+def _obj_dir() -> str:
     try:
         gitdir = sub.check_output('git rev-parse --git-dir'.split(),
                                   encoding='utf-8').strip()
@@ -481,68 +483,67 @@ class GitFat:
         filters = gitconfig_get('filter.fat.clean') and gitconfig_get('filter.fat.smudge')
         return filters and reqs
 
-    def _encode(self, digest, size):
+    def _encode(self, digest: str, size: int) -> bytes:
         '''
         Produce representation of file to be stored in repository. 20 characters can hold 64-bit integers.
         '''
-        return self._format.format(digest=digest, size=size)
+        return self._format.format(digest=digest, size=size).encode('ascii')
 
-    def _decode(self, stream):
+    def _decode(self, stream: IO[bytes]) -> Tuple[Iterable[bytes], bool]:
         '''
         Returns iterator and True if stream is git-fat object
         '''
-        stream_iter = readblocks(stream)
+        stream_iter = iter(readblocks(stream))
         # Read block for check raises StopIteration if file is zero length
         try:
             block = next(stream_iter)
         except StopIteration:
             return stream_iter, False
 
-        def prepend(blk, iterator):
+        def prepend(blk: bytes, iterator: Iterator[bytes]) -> Iterable[bytes]:
             yield blk
             yield from iterator
 
         # Put block back
         ret = prepend(block, stream_iter)
 
-        if isinstance(block, bytes):
-            block = block.decode('latin-1')
-
-        if block.startswith(self._cookie):
+        if block.startswith(self._cookie.encode('ascii')):
             if len(block) != self._magiclen:  # Sanity check
                 warnings.warn('Found file with cookie but without magiclen')
                 return ret, False
             return ret, True
         return ret, False
 
-    def _get_digest(self, stream):
+    def _get_digest(self, stream: IO[bytes]) -> str:
         '''
         Returns digest if stream is fatfile placeholder or '' if not
         '''
         # DONT EVER CALL THIS FUNCTION FROM FILTERS, IT DISCARDS THE FIRST
         # BLOCK OF THE INPUT STREAM.  IT IS ONLY MEANT TO CHECK THE STATUS
         # OF A FILE IN THE TREE
-        stream, fatfile = self._decode(stream)
+        stream_iter, fatfile = self._decode(stream)
+
         if fatfile:
-            block = next(stream)  # read the first block
+            block = next(iter(stream_iter))  # read the first block
             digest = block.split()[2]
-            return digest
+            return digest.decode('ascii')
+
         return ''
 
-    def _cached_objects(self):
+    def _cached_objects(self) -> FrozenSet[str]:
         '''
         Returns a set of all the cached objects
         '''
-        return set(os.listdir(self.objdir))
+        return frozenset(os.listdir(self.objdir))
 
-    def _referenced_objects(self, **kwargs):
+    def _referenced_objects(self, **kwargs: Any) -> FrozenSet[str]:
         '''
         Return just the hashes of the files that are referenced in the repository
         '''
         objs_dict = self._managed_files(**kwargs)
-        return set(objs_dict.keys())
+        return frozenset(objs_dict)
 
-    def _rev_list(self):
+    def _rev_list(self) -> Iterable[Tuple[str, str, str]]:
         '''
         Generator for objects in rev. Returns (hash, type, size) tuple.
         '''
@@ -566,7 +567,7 @@ class GitFat:
             # Read the objects and print <sha> <type> <size>
             catfile = git('cat-file --batch-check'.split(), stdin=awk.stdout, stdout=sub.PIPE)
 
-        for line in catfile.stdout:
+        for line in cast(IO[str], catfile.stdout):
             objhash, objtype, size = line.split()
             yield objhash, objtype, size
 
@@ -594,16 +595,16 @@ class GitFat:
 
         revlist.wait()
 
-    def _managed_files(self, **unused_kwargs):
+    def _managed_files(self, **unused_kwargs: Any) -> Dict[str, str]:
         revlistgen = self._rev_list()
         # Find any objects that are git-fat placeholders which are tracked in the repository
-        managed = {}
+        managed: Dict[str, str] = {}
         for objhash, objtype, size in revlistgen:
             # files are of blob type
             if objtype == 'blob' and int(size) == self._magiclen:
                 # Read the actual file contents
                 readfile = git(['cat-file', '-p', objhash], stdout=sub.PIPE)
-                digest = self._get_digest(readfile.stdout)
+                digest = self._get_digest(cast(io.TextIOWrapper, readfile.stdout).buffer)
                 if digest:
                     managed[objhash] = digest
 
@@ -626,10 +627,10 @@ class GitFat:
         patterns = patterns or []
         # Null-terminated for proper file name handling (spaces)
         out = sub.check_output(['git', 'ls-files', '-z'] + patterns)
-        for fname in out.split(b'\x00')[:-1]:
+        for fname_enc in out.split(b'\x00')[:-1]:
             # TODO: Properly speaking should use the correct locale encoding; but
             # assume UTF-8 because we are not in Japan (yet...)
-            fname = fname.decode('utf-8')
+            fname = fname_enc.decode('utf-8')
             if not os.path.exists(fname):
                 continue
             st = os.lstat(fname)
@@ -637,18 +638,19 @@ class GitFat:
                 continue
             with open(fname, "rb") as f:
                 digest = self._get_digest(f)
+
             if digest:
                 yield (digest, fname)
 
-    def _filter_smudge(self, instream, outstream):
+    def _filter_smudge(self, instream: IO[bytes], outstream: IO[bytes]) -> None:
         '''
         The smudge filter runs whenever a file is being checked out into the working copy of the tree
         instream is sys.stdin and outstream is sys.stdout when it is called by git
         '''
         blockiter, fatfile = self._decode(instream)
         if fatfile:
-            block = next(blockiter)  # read the first block
-            digest = block.split()[2]
+            block = next(iter(blockiter))  # read the first block
+            digest = block.split()[2].decode('ascii')
             objfile = os.path.join(self.objdir, digest)
             try:
                 with open(objfile, "rb") as f:
@@ -659,9 +661,9 @@ class GitFat:
                 outstream.write(block)
         else:
             logger.info('git-fat filter-smudge: not a managed file')
-            cat_iter(blockiter, sys.stdout)
+            cat_iter(blockiter, sys.stdout.buffer)
 
-    def _filter_clean(self, instream, outstream):
+    def _filter_clean(self, instream: IO[bytes], outstream: IO[bytes]) -> None:
         '''
         The clean filter runs when a file is added to the index. It gets the "smudged" (working copy)
         version of the file on stdin and produces the "clean" (repository) version on stdout.
@@ -698,7 +700,7 @@ class GitFat:
         # Write placeholder to index
         outstream.write(self._encode(digest, size))
 
-    def filter_clean(self, cur_file, **unused_kwargs):
+    def filter_clean(self, cur_file: str, **unused_kwargs: Any) -> None:
         '''
         Public command to do the clean (should only be called by git)
         '''
@@ -708,20 +710,20 @@ class GitFat:
             logger.info(f'Not adding {cur_file}. It is not a new file and is not '
                         f'managed by git-fat')
             # Git needs something, so we cat stdin to stdout
-            cat(sys.stdin, sys.stdout)
+            cat(sys.stdin.buffer, sys.stdout.buffer)
         else:  # We clean the file
             if cur_file:
                 logger.info(f'Adding {cur_file}')
-            self._filter_clean(sys.stdin, sys.stdout)
+            self._filter_clean(sys.stdin.buffer, sys.stdout.buffer)
 
-    def filter_smudge(self, **unused_kwargs):
+    def filter_smudge(self, **unused_kwargs: Any) -> None:
         '''
         Public command to do the smudge (should only be called by git)
         '''
         logger.debug(f"SMUDGE: unused_kwargs={unused_kwargs}")
-        self._filter_smudge(sys.stdin, sys.stdout)
+        self._filter_smudge(sys.stdin.buffer, sys.stdout.buffer)
 
-    def find(self, size, **unused_kwargs):
+    def find(self, size: int, **unused_kwargs: Any) -> None:
         '''
         Find any files over size threshold in the repository.
         '''
@@ -735,22 +737,22 @@ class GitFat:
         for objhash, objpath in self._find_paths(objsizedict.keys()):
             print(objhash, objsizedict[objhash], objpath)
 
-    def _parse_ls_files(self, line):
+    def _parse_ls_files(self, line: str) -> Tuple[str, str, str, str]:
         mode, _, tail = line.partition(' ')
         blobhash, _, tail = tail.partition(' ')
         stageno, _, tail = tail.partition('\t')
         filename = tail.strip()
         return mode, blobhash, stageno, filename
 
-    def _get_old_gitattributes(self):
+    def _get_old_gitattributes(self) -> Tuple[List[str], str, str]:
         """ Get the last .gitattributes file in HEAD, and return it """
         ls_ga = git('ls-files -s .gitattributes'.split(), stdout=sub.PIPE)
-        lsout = ls_ga.stdout.read().strip()
+        lsout = cast(IO[str], ls_ga.stdout).read().strip()
         ls_ga.wait()
         if lsout:  # Always try to get the old gitattributes
             ga_mode, ga_hash, ga_stno, _ = self._parse_ls_files(lsout)
             ga_cat = git(f'cat-file blob {ga_hash}'.split(), stdout=sub.PIPE)
-            old_ga = ga_cat.stdout.read().splitlines()
+            old_ga = cast(IO[str], ga_cat.stdout).read().splitlines()
             ga_cat.wait()
         else:
             ga_mode, ga_stno, old_ga = '100644', '0', []
@@ -771,7 +773,8 @@ class GitFat:
         stdout, _ = ga_hashobj.communicate('\n'.join(new_ga) + '\n')
         return ga_mode, stdout.strip(), ga_stno, '.gitattributes'
 
-    def _process_index_filter_line(self, line, workdir, excludes):
+    def _process_index_filter_line(self, line: str, workdir: str,
+                                   excludes: Container[str]) -> Optional[Tuple[str, str, str, str]]:
 
         mode, blobhash, stageno, filename = self._parse_ls_files(line)
 
@@ -783,9 +786,10 @@ class GitFat:
         if not os.path.exists(cleanedobj_hash):
             catfile = git(f'cat-file blob {blobhash}'.split(), stdout=sub.PIPE)
             hashobj = git('hash-object -w --stdin'.split(), stdin=sub.PIPE, stdout=sub.PIPE)
-            self._filter_clean(catfile.stdout, hashobj.stdin)
-            hashobj.stdin.close()
-            objhash = hashobj.stdout.read().strip()
+            self._filter_clean(cast(io.TextIOWrapper, catfile.stdout).buffer,
+                               cast(io.TextIOWrapper, hashobj.stdin).buffer)
+            cast(IO[str], hashobj.stdin).close()
+            objhash = cast(IO[str], hashobj.stdout).read().strip()
             catfile.wait()
             hashobj.wait()
             with open(cleanedobj_hash, 'w', encoding='utf-8') as cleaned:
@@ -795,20 +799,21 @@ class GitFat:
                 objhash = cleaned.read().strip()
         return mode, objhash, stageno, filename
 
-    def index_filter(self, filelist, add_gitattributes=True, **unused_kwargs):
+    def index_filter(self, filelist: str, add_gitattributes: bool = True,
+                     **unused_kwargs: Any) -> None:
         gitdir = sub.check_output('git rev-parse --git-dir'.split(),
                                   encoding='utf-8').strip()
         workdir = os.path.join(gitdir, 'fat', 'index-filter')
         mkdir_p(workdir)
 
         with open(filelist, 'r', encoding='utf-8') as excludes:
-            files_to_exclude = excludes.read().splitlines()
+            files_to_exclude = frozenset(excludes.read().splitlines())
 
         ls_files = git('ls-files -s'.split(), stdout=sub.PIPE)
         uip = git('update-index --index-info'.split(), stdin=sub.PIPE)
 
         newfiles = []
-        for line in ls_files.stdout:
+        for line in cast(IO[str], ls_files.stdout):
             newfile = self._process_index_filter_line(line, workdir, files_to_exclude)
             if newfile:
                 self._update_index(uip, *newfile)
@@ -821,7 +826,7 @@ class GitFat:
             self._update_index(uip, *attrs)
 
         ls_files.wait()
-        uip.stdin.close()
+        cast(IO[str], uip.stdin).close()
         uip.wait()
 
     def list_files(self, **kwargs):
@@ -888,7 +893,7 @@ class GitFat:
             elif show_orphans:
                 print(f'Data unavailable: {digest} {fname}')
 
-    def can_clean_file(self, filename):
+    def can_clean_file(self, filename: str) -> bool:
         '''
         Checks to see if the current file exists in the local repo before filter-clean
         This method prevents fat from hijacking glob matches that are old
@@ -896,7 +901,7 @@ class GitFat:
         # If the file doesn't exist in the immediately previous revision, add it
         showfile = git(['show', f'HEAD:{filename}'], stdout=sub.PIPE, stderr=sub.PIPE)
 
-        blockiter, is_fatfile = self._decode(showfile.stdout)
+        blockiter, is_fatfile = self._decode(cast(io.TextIOWrapper, showfile.stdout).buffer)
 
         # Flush the buffers to prevent deadlock from wait()
         # Caused when stdout from showfile is a large binary file and can't be fully buffered
@@ -919,7 +924,8 @@ class GitFat:
         # TODO: Why use _orphan _and_ _referenced here?
         if patterns:
             # filter the working tree by a pattern
-            files = set(digest for digest, fname in self._orphan_files(patterns=patterns)) - cached_objs
+            orphan_files = self._orphan_files(patterns=patterns)
+            files = frozenset(digest for digest, fname in orphan_files) - cached_objs
         else:
             # default pull any object referenced but not stored
             files = self._referenced_objects(**kwargs) - cached_objs
@@ -935,7 +941,7 @@ class GitFat:
         else:
             self.checkout()
 
-    def push(self, unused_pattern=None, **kwargs):
+    def push(self, unused_pattern: Any = None, **kwargs: Any) -> None:
         # We only want the intersection of the referenced files and ones we have cached
         # Prevents file doesn't exist errors, while saving on bw by default (_referenced only
         # checks HEAD for files)
@@ -944,7 +950,7 @@ class GitFat:
         if not self.backend.push_files(files):
             sys.exit(1)
 
-    def _status(self, **kwargs):
+    def _status(self, **kwargs: Any) -> Tuple[FrozenSet[str], FrozenSet[str]]:
         '''
         Helper function that returns the oprhans and stale files
         '''
@@ -954,7 +960,7 @@ class GitFat:
         orphans = referenced - catalog
         return stale, orphans
 
-    def status(self, **kwargs):
+    def status(self, **kwargs: Any) -> None:
         '''
         Show orphan (in tree, but not in cache) and stale (in cache, but not in tree) objects, if any.
         '''
@@ -979,13 +985,15 @@ def _get_options(config: cfgparser.ConfigParser, backend: str, cfg_file_path: st
     return opts
 
 
-def _read_config(cfg_file_path: Optional[str] = None) -> cfgparser.ConfigParser:
+def _read_config(cfg_file_path: str) -> cfgparser.ConfigParser:
     config = cfgparser.ConfigParser()
+
     if not os.path.exists(cfg_file_path):
         # Can't continue, but this isn't unusual
         logger.warning(f'This does not appear to be a repository managed by git-fat. '
                        f'Missing configfile at: {cfg_file_path}')
         sys.exit(0)
+
     try:
         config.read(cfg_file_path)
     except cfgparser.Error as exc:  # TODO: figure out what to catch here
@@ -994,9 +1002,10 @@ def _read_config(cfg_file_path: Optional[str] = None) -> cfgparser.ConfigParser:
     return config
 
 
-def _parse_config(backend=None, cfg_file_path=None):
+def _parse_config(backend: Optional[str] = None, cfg_file_path: Optional[str] = None) -> BackendInterface:
     """ Parse the given config file and return the backend instance """
     cfg_file_path = _config_path(path=cfg_file_path)
+    assert cfg_file_path
     config = _read_config(cfg_file_path)
     if backend is None:
         try:
@@ -1042,7 +1051,7 @@ def _configure_logging(log_level):
     logger.setLevel(log_level)
 
 
-def _load_backend(kwargs):
+def _load_backend(kwargs: Dict[str, Any]) -> Optional[BackendInterface]:
     needs_backend = ('pull', 'push')
     backend_opt = kwargs.pop('backend', None)
     config_file = kwargs.pop('config_file', None)
@@ -1060,7 +1069,7 @@ def _load_backend(kwargs):
     return backend
 
 
-def main():
+def main() -> None:
 
     parser = argparse.ArgumentParser(
         argument_default=argparse.SUPPRESS,
@@ -1152,8 +1161,8 @@ def main():
         logger.error(str(err))
         sys.exit(1)
     except Exception:
-        if kwargs.get('cur_file'):
-            logger.error("processing file: " + kwargs.get('cur_file'))
+        if cur_file := kwargs.get('cur_file'):
+            logger.error(f'processing file: {cur_file}')
         raise
 
 

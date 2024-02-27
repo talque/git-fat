@@ -43,7 +43,7 @@ if os.getenv("GIT_FAT_KEEP_TEMP_DIRS") == "1":
 if os.getenv("GIT_FAT_DISABLE_COVERAGE") == "1":
     GIT_FAT_DISABLE_COVERAGE = True
 
-ignore_errors_in_log_file = []
+ignore_errors_in_log_file: list[str] = []
 
 
 def check_log_file_for_errors():
