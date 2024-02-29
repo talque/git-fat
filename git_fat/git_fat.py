@@ -567,11 +567,11 @@ class GitFat:
             # Read the objects and print <sha> <type> <size>
             catfile = git('cat-file --batch-check'.split(), stdin=awk.stdout, stdout=sub.PIPE)
 
-        for line in cast(IO[str], catfile.stdout):
-            objhash, objtype, size = line.split()
-            yield objhash, objtype, size
+            for line in cast(IO[str], catfile.stdout):
+                objhash, objtype, size = line.split()
+                yield objhash, objtype, size
 
-        catfile.wait()
+            catfile.wait()
 
     def _find_paths(self, hashes):
         '''
