@@ -1,4 +1,4 @@
-from distutils.core import setup
+from setuptools import setup
 from setuptools.command.test import test as TestCommand  # noqa
 import sys
 
@@ -26,7 +26,9 @@ setup(
     maintainer_email='alan.braithwaite@cyaninc.com',
     name='git-fat',
     packages=['git_fat'],
-    scripts=['bin/git-fat'],
+    entry_points={
+        'console_scripts': ['git-fat=git_fat.git_fat:main']
+    },
     url='https://github.com/cyaninc/git-fat',
     version=__version__,
     cmdclass={"test": Tox},
