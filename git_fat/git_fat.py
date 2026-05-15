@@ -379,7 +379,7 @@ class RSyncBackend(BackendInterface):
             rsync_tool = 'git-fat_rsync.exe'
         else:
             rsync_tool = 'rsync'
-        cmd_tmpl = [rsync_tool] + ' -s --progress'\
+        cmd_tmpl = [rsync_tool] + ' -s --progress --trust-sender'\
             ' --ignore-existing --from0 --files-from=-'.split()
 
         if push:
@@ -604,7 +604,7 @@ class GitFat:
             if objtype == 'blob' and int(size) == self._magiclen:
                 # Read the actual file contents
                 readfile = git(['cat-file', '-p', objhash], stdout=sub.PIPE)
-                digest = self._get_digest(cast(io.TextIOWrapper, readfile.stdout).buffer)
+                digest = self._get_digest(cast(IO[bytes], cast(io.TextIOWrapper, readfile.stdout).buffer))
                 if digest:
                     managed[objhash] = digest
 
@@ -758,7 +758,7 @@ class GitFat:
             ga_mode, ga_stno, old_ga = '100644', '0', []
         return old_ga, ga_mode, ga_stno
 
-    def _update_index(self, uip, mode, content, stageno, filename):
+    def _update_index(self, uip, mode, content, stageno, filename):  # pylint: disable=too-many-positional-arguments
         fmt = '{0} {1} {2}\t{3}\n'
         uip.stdin.write(fmt.format(mode, content, stageno, filename))
 
@@ -786,8 +786,8 @@ class GitFat:
         if not os.path.exists(cleanedobj_hash):
             catfile = git(f'cat-file blob {blobhash}'.split(), stdout=sub.PIPE)
             hashobj = git('hash-object -w --stdin'.split(), stdin=sub.PIPE, stdout=sub.PIPE)
-            self._filter_clean(cast(io.TextIOWrapper, catfile.stdout).buffer,
-                               cast(io.TextIOWrapper, hashobj.stdin).buffer)
+            self._filter_clean(cast(IO[bytes], cast(io.TextIOWrapper, catfile.stdout).buffer),
+                               cast(IO[bytes], cast(io.TextIOWrapper, hashobj.stdin).buffer))
             cast(IO[str], hashobj.stdin).close()
             objhash = cast(IO[str], hashobj.stdout).read().strip()
             catfile.wait()
@@ -901,7 +901,7 @@ class GitFat:
         # If the file doesn't exist in the immediately previous revision, add it
         showfile = git(['show', f'HEAD:{filename}'], stdout=sub.PIPE, stderr=sub.PIPE)
 
-        blockiter, is_fatfile = self._decode(cast(io.TextIOWrapper, showfile.stdout).buffer)
+        blockiter, is_fatfile = self._decode(cast(IO[bytes], cast(io.TextIOWrapper, showfile.stdout).buffer))
 
         # Flush the buffers to prevent deadlock from wait()
         # Caused when stdout from showfile is a large binary file and can't be fully buffered
